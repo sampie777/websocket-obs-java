@@ -4,12 +4,14 @@ import net.twasi.obsremotejava.callbacks.Callback;
 import net.twasi.obsremotejava.callbacks.ErrorCallback;
 import net.twasi.obsremotejava.callbacks.StringCallback;
 import net.twasi.obsremotejava.objects.throwables.OBSResponseError;
+import net.twasi.obsremotejava.requests.ReorderSceneItems.ReorderSceneItemsRequest;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
 
 import java.net.ConnectException;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -119,6 +121,14 @@ public class OBSRemoteController {
         communicator.getScenes(callback);
     }
 
+    public void registerEventCallback(String updateType, StringCallback callback) {
+        communicator.registerEventCallback(updateType, callback);
+    }
+
+    public void unregisterEventCallback(String updateType) {
+        communicator.unregisterEventCallback(updateType);
+    }
+
     public void registerOnError(ErrorCallback onError) {
         this.onError = onError;
         communicator.registerOnError(onError);
@@ -199,6 +209,10 @@ public class OBSRemoteController {
         communicator.getSceneItemProperties(scene, source, callback);
     }
 
+    public void reorderSceneItems(String scene, List<ReorderSceneItemsRequest.Item> items, Callback callback) {
+        communicator.reorderSceneItems(scene, items, callback);
+    }
+
     public void getTransitionList(Callback callback) {
         communicator.getTransitionList(callback);
     }
@@ -225,6 +239,14 @@ public class OBSRemoteController {
 
     public void stopStreaming(Callback callback) {
         communicator.stopStreaming(callback);
+    }
+
+    public void startRecording(Callback callback) {
+        communicator.startRecording(callback);
+    }
+
+    public void stopRecording(Callback callback) {
+        communicator.stopRecording(callback);
     }
 
     public void listProfiles(Callback callback) {

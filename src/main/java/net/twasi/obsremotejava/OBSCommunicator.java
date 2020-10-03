@@ -24,6 +24,7 @@ import net.twasi.obsremotejava.requests.GetCurrentScene.GetCurrentSceneResponse;
 import net.twasi.obsremotejava.requests.GetPreviewScene.GetPreviewSceneRequest;
 import net.twasi.obsremotejava.requests.GetPreviewScene.GetPreviewSceneResponse;
 import net.twasi.obsremotejava.requests.GetSceneItemProperties.GetSceneItemPropertiesRequest;
+import net.twasi.obsremotejava.requests.GetSceneItemProperties.GetSceneItemPropertiesResponse;
 import net.twasi.obsremotejava.requests.GetSceneList.GetSceneListRequest;
 import net.twasi.obsremotejava.requests.GetSceneList.GetSceneListResponse;
 import net.twasi.obsremotejava.requests.GetSourceSettings.GetSourceSettingsRequest;
@@ -42,6 +43,8 @@ import net.twasi.obsremotejava.requests.GetVolume.GetVolumeRequest;
 import net.twasi.obsremotejava.requests.GetVolume.GetVolumeResponse;
 import net.twasi.obsremotejava.requests.ListProfiles.ListProfilesRequest;
 import net.twasi.obsremotejava.requests.ListProfiles.ListProfilesResponse;
+import net.twasi.obsremotejava.requests.ReorderSceneItems.ReorderSceneItemsRequest;
+import net.twasi.obsremotejava.requests.ReorderSceneItems.ReorderSceneItemsResponse;
 import net.twasi.obsremotejava.requests.ResponseBase;
 import net.twasi.obsremotejava.requests.SaveReplayBuffer.SaveReplayBufferRequest;
 import net.twasi.obsremotejava.requests.SaveReplayBuffer.SaveReplayBufferResponse;
@@ -65,10 +68,14 @@ import net.twasi.obsremotejava.requests.SetTransitionDuration.SetTransitionDurat
 import net.twasi.obsremotejava.requests.SetTransitionDuration.SetTransitionDurationResponse;
 import net.twasi.obsremotejava.requests.SetVolume.SetVolumeRequest;
 import net.twasi.obsremotejava.requests.SetVolume.SetVolumeResponse;
+import net.twasi.obsremotejava.requests.StartRecording.StartRecordingRequest;
+import net.twasi.obsremotejava.requests.StartRecording.StartRecordingResponse;
 import net.twasi.obsremotejava.requests.StartReplayBuffer.StartReplayBufferRequest;
 import net.twasi.obsremotejava.requests.StartReplayBuffer.StartReplayBufferResponse;
 import net.twasi.obsremotejava.requests.StartStreaming.StartStreamingRequest;
 import net.twasi.obsremotejava.requests.StartStreaming.StartStreamingResponse;
+import net.twasi.obsremotejava.requests.StopRecording.StopRecordingRequest;
+import net.twasi.obsremotejava.requests.StopRecording.StopRecordingResponse;
 import net.twasi.obsremotejava.requests.StopReplayBuffer.StopReplayBufferRequest;
 import net.twasi.obsremotejava.requests.StopReplayBuffer.StopReplayBufferResponse;
 import net.twasi.obsremotejava.requests.StopStreaming.StopStreamingRequest;
@@ -76,22 +83,17 @@ import net.twasi.obsremotejava.requests.StopStreaming.StopStreamingResponse;
 import net.twasi.obsremotejava.requests.TransitionToProgram.TransitionToProgramRequest;
 import net.twasi.obsremotejava.requests.TransitionToProgram.TransitionToProgramResponse;
 import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
-import org.eclipse.jetty.websocket.api.annotations.WebSocket;
+import org.eclipse.jetty.websocket.api.annotations.*;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-@WebSocket(maxTextMessageSize = 64 * 1024, maxIdleTime = 360000000)
+@WebSocket(maxTextMessageSize = 1024 * 1024, maxIdleTime = 360000000)
 public class OBSCommunicator {
     private boolean debug;
     private final String password;
@@ -116,8 +118,15 @@ public class OBSCommunicator {
     private Callback onScenesChanged;
     private Callback onTransitionBegin;
     private Callback onTransitionEnd;
+    private Map<String, StringCallback> eventCallbacks = new HashMap<>();
 
     private GetVersionResponse versionInfo;
+
+    @OnWebSocketError
+    public void onSocketError(Throwable t) {
+        t.printStackTrace();
+        runOnError("Websocket gave an error: " + t.getLocalizedMessage(), t);
+    }
 
     public OBSCommunicator(boolean debug, String password) {
         this.closeLatch = new CountDownLatch(1);
@@ -175,6 +184,10 @@ public class OBSCommunicator {
             if (new Gson().fromJson(msg, JsonObject.class).has("message-id")) {
                 // Response
                 ResponseBase responseBase = new Gson().fromJson(msg, ResponseBase.class);
+                if (!messageTypes.containsKey(responseBase.getMessageId())) {
+                    return;
+                }
+
                 Class type = messageTypes.get(responseBase.getMessageId());
                 responseBase = (ResponseBase) new Gson().fromJson(msg, type);
 
@@ -188,11 +201,20 @@ public class OBSCommunicator {
 
             } else {
                 JsonElement elem = new JsonParser().parse(msg);
-                EventType eventType;
 
+                String updateType;
                 try {
-                    eventType = EventType.valueOf(elem.getAsJsonObject().get("update-type").getAsString());
+                    updateType = elem.getAsJsonObject().get("update-type").getAsString();
                 } catch (Throwable t) {
+                    t.printStackTrace();
+                    return;
+                }
+
+                EventType eventType;
+                try {
+                    eventType = EventType.valueOf(updateType);
+                } catch (Throwable t) {
+                    processIncomingRegisteredEvent(msg, updateType);
                     return;
                 }
 
@@ -298,6 +320,21 @@ public class OBSCommunicator {
         }
     }
 
+    private void processIncomingRegisteredEvent(String msg, String updateType) {
+        StringCallback callback = eventCallbacks.get(updateType);
+        if (callback == null) {
+            return;
+        }
+
+        try {
+            callback.run(msg);
+        } catch (Throwable t) {
+            System.err.println("Failed to execute custom registered callback for event: " + updateType);
+            t.printStackTrace();
+            runOnError("Failed to execute custom registered callback for event: " + updateType, t);
+        }
+    }
+
     private void authenticateWithServer(String challenge, String salt) {
         if (password == null) {
             System.err.println("Authentication required by server but no password set by client");
@@ -335,6 +372,14 @@ public class OBSCommunicator {
         String authResponseString = encodedSecret + challenge;
         byte[] authResponseHash = digest.digest(authResponseString.getBytes(StandardCharsets.UTF_8));
         return Base64.getEncoder().encodeToString(authResponseHash);
+    }
+
+    public void registerEventCallback(String updateType, StringCallback callback) {
+        eventCallbacks.put(updateType, callback);
+    }
+
+    public void unregisterEventCallback(String updateType) {
+        eventCallbacks.remove(updateType);
     }
 
     public void registerOnError(ErrorCallback onError) {
@@ -403,16 +448,20 @@ public class OBSCommunicator {
 
     public void setSourceVisiblity(String scene, String source, boolean visibility, Callback callback) {
         SetSceneItemPropertiesRequest request = new SetSceneItemPropertiesRequest(this, scene, source, visibility);
-        System.out.println(new Gson().toJson(request));
         session.getRemote().sendStringByFuture(new Gson().toJson(request));
         callbacks.put(SetSceneItemPropertiesResponse.class, callback);
     }
 
     public void getSceneItemProperties(String scene, String source, Callback callback) {
         GetSceneItemPropertiesRequest request = new GetSceneItemPropertiesRequest(this, scene, source);
-        System.out.println(new Gson().toJson(request));
         session.getRemote().sendStringByFuture(new Gson().toJson(request));
-        callbacks.put(SetSceneItemPropertiesResponse.class, callback);
+        callbacks.put(GetSceneItemPropertiesResponse.class, callback);
+    }
+
+    public void reorderSceneItems(String scene, List<ReorderSceneItemsRequest.Item> items, Callback callback) {
+        ReorderSceneItemsRequest request = new ReorderSceneItemsRequest(this, scene, items);
+        session.getRemote().sendStringByFuture(new Gson().toJson(request));
+        callbacks.put(ReorderSceneItemsResponse.class, callback);
     }
 
     public void getTransitionList(Callback callback) {
@@ -458,7 +507,20 @@ public class OBSCommunicator {
 
         session.getRemote().sendStringByFuture(new Gson().toJson(request));
         callbacks.put(StopStreamingResponse.class, callback);
+    }
 
+    public void startRecording(Callback callback) {
+        StartRecordingRequest request = new StartRecordingRequest(this);
+
+        session.getRemote().sendStringByFuture(new Gson().toJson(request));
+        callbacks.put(StartRecordingResponse.class, callback);
+    }
+
+    public void stopRecording(Callback callback) {
+        StopRecordingRequest request = new StopRecordingRequest(this);
+
+        session.getRemote().sendStringByFuture(new Gson().toJson(request));
+        callbacks.put(StopRecordingResponse.class, callback);
     }
 
     public void listProfiles(Callback callback) {

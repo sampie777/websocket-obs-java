@@ -13,6 +13,7 @@ public enum RequestType {
 
     GetSceneItemProperties,
     SetSceneItemProperties,
+    ReorderSceneItems,
 
     GetTransitionList,
 
@@ -29,6 +30,8 @@ public enum RequestType {
     GetStreamingStatus,
     StartStreaming,
     StopStreaming,
+    StartRecording,
+    StopRecording,
 
     SetCurrentProfile,
     GetCurrentProfile,
