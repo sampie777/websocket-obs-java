@@ -130,12 +130,6 @@ public class OBSCommunicator {
 
     private GetVersionResponse versionInfo;
 
-    @OnWebSocketError
-    public void onSocketError(Throwable t) {
-        t.printStackTrace();
-        runOnError("Websocket gave an error: " + t.getLocalizedMessage(), t);
-    }
-
     public OBSCommunicator(boolean debug, String password) {
         this.closeLatch = new CountDownLatch(1);
         this.debug = debug;

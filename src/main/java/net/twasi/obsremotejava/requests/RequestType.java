@@ -32,8 +32,6 @@ public enum RequestType {
     StopRecording,
     StartStreaming,
     StopStreaming,
-    StartRecording,
-    StopRecording,
 
     SetCurrentProfile,
     GetCurrentProfile,
