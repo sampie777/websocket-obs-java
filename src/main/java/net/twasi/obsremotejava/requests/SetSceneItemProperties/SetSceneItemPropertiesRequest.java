@@ -18,6 +18,8 @@ public class SetSceneItemPropertiesRequest extends BaseRequest {
         this.item = source;
         this.visible = visible;
 
+        log.debug("MSG ID: " + getMessageId());
+
         com.messageTypes.put(getMessageId(), SetSceneItemPropertiesResponse.class);
     }
 }
